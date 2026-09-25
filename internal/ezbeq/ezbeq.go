@@ -228,70 +228,91 @@ func hasAuthor(s string) bool {
 	return hasAuthor != "none" && hasAuthor != ""
 }
 
-// buildAuthorWhitelist returns a string of authors to search for
-func buildAuthorWhitelist(preferredAuthors string, endpoint string) string {
-	authors := strings.Split(preferredAuthors, ",")
-	for _, v := range authors {
-		endpoint += fmt.Sprintf("&authors=%s", strings.TrimSpace(v))
+// authorSearchOrder returns authors in preference order. An empty author means
+// search without an author filter and is only added for a blank setting or a
+// trailing wildcard.
+func authorSearchOrder(preferredAuthors string) ([]string, error) {
+	if !hasAuthor(preferredAuthors) {
+		return []string{""}, nil
 	}
-	return endpoint
+
+	tokens := strings.Split(preferredAuthors, ",")
+	entries := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		entry := strings.TrimSpace(token)
+		if entry != "" && !strings.EqualFold(entry, "none") {
+			entries = append(entries, entry)
+		}
+	}
+
+	authors := make([]string, 0, len(tokens))
+	for i, author := range entries {
+		if author == "*" {
+			if i != len(entries)-1 {
+				return nil, errors.New("wildcard in BEQ Preferred Author must be the last entry")
+			}
+			authors = append(authors, "")
+			continue
+		}
+		authors = append(authors, author)
+	}
+	if len(authors) == 0 {
+		return []string{""}, nil
+	}
+	return authors, nil
 }
 
 // searchCatalog will use ezbeq to search the catalog and then find the right match. tmdb data comes from plex, matched to ezbeq catalog
 func (c *BeqClient) searchCatalog(m *models.SearchRequest) (models.BeqCatalog, error) {
-	// url encode because of spaces and stuff
-	code := urlEncode(m.Codec)
-	endpoint := fmt.Sprintf("/api/1/search?audiotypes=%s&years=%d&tmdbid=%s", code, m.Year, m.TMDB)
-
-	// this is an author whitelist for each non-empty author append it to search
-	if hasAuthor(m.PreferredAuthor) {
-		endpoint = buildAuthorWhitelist(m.PreferredAuthor, endpoint)
+	if config.GetBool("jellyfin.skiptmdb") && m.Title == "" {
+		return models.BeqCatalog{}, errors.New("title is blank, can't skip TMDB")
 	}
-	log.Debugf("sending ezbeq search request to %s", endpoint)
-
-	var payload []models.BeqCatalog
-	res, err := c.makeReq(endpoint, nil, http.MethodGet)
+	authors, err := authorSearchOrder(m.PreferredAuthor)
 	if err != nil {
 		return models.BeqCatalog{}, err
 	}
 
-	err = json.Unmarshal(res, &payload)
-	if err != nil {
-		return models.BeqCatalog{}, fmt.Errorf("error: %v // response: %v", err, string(res))
-	}
+	for _, author := range authors {
+		code := urlEncode(m.Codec)
+		endpoint := fmt.Sprintf("/api/1/search?audiotypes=%s&years=%d&tmdbid=%s", code, m.Year, m.TMDB)
+		if author != "" {
+			endpoint += "&authors=" + url.QueryEscape(author)
+		}
+		log.Debugf("sending ezbeq search request to %s", endpoint)
 
-	// search through results and find match
-	for _, val := range payload {
-		// if skipping TMDB, set the IDs to match
-		if config.GetBool("jellyfin.skiptmdb") {
-			if m.Title == "" {
-				return models.BeqCatalog{}, errors.New("title is blank, can't skip TMDB")
-			}
-			log.Debug("Skipping TMDB for search")
-			val.MovieDbID = m.TMDB
-			if !strings.EqualFold(val.Title, m.Title) {
-				log.Debugf("%s did not match with title %s", val.Title, m.Title)
-				continue
-			}
-			log.Debugf("%s matched with title %s", val.Title, m.Title)
+		res, err := c.makeReq(endpoint, nil, http.MethodGet)
+		if err != nil {
+			return models.BeqCatalog{}, err
 		}
-		log.Debugf("Beq results: Title: %v // Codec %v, ID: %v", val.Title, val.AudioTypes, val.ID)
-		// if we find a match, return it. Much easier to match on tmdb since plex provides it also
-		var audioMatch bool
-		// rationale here is some BEQ entries have multiple audio types in one entry
-		for _, v := range val.AudioTypes {
-			if strings.EqualFold(v, m.Codec) {
-				audioMatch = true
-				break
-			}
+		var payload []models.BeqCatalog
+		if err := json.Unmarshal(res, &payload); err != nil {
+			return models.BeqCatalog{}, fmt.Errorf("error: %v // response: %v", err, string(res))
 		}
-		if val.MovieDbID == m.TMDB && val.Year == m.Year && audioMatch {
-			log.Debugf("%s matched with codecs %v, checking further", val.Title, val.AudioTypes)
-			// if it matches, check edition
-			if checkEdition(val, m.Edition) {
-				log.Infof("Found a match in catalog from author %s", val.Author)
-				return val, nil
-			} else {
+
+		for _, val := range payload {
+			if config.GetBool("jellyfin.skiptmdb") {
+				log.Debug("Skipping TMDB for search")
+				val.MovieDbID = m.TMDB
+				if !strings.EqualFold(val.Title, m.Title) {
+					log.Debugf("%s did not match with title %s", val.Title, m.Title)
+					continue
+				}
+				log.Debugf("%s matched with title %s", val.Title, m.Title)
+			}
+			log.Debugf("Beq results: Title: %v // Codec %v, ID: %v", val.Title, val.AudioTypes, val.ID)
+			var audioMatch bool
+			for _, v := range val.AudioTypes {
+				if strings.EqualFold(v, m.Codec) {
+					audioMatch = true
+					break
+				}
+			}
+			if val.MovieDbID == m.TMDB && val.Year == m.Year && audioMatch {
+				log.Debugf("%s matched with codecs %v, checking further", val.Title, val.AudioTypes)
+				if checkEdition(val, m.Edition) {
+					log.Infof("Found a match in catalog from author %s", val.Author)
+					return val, nil
+				}
 				log.Errorf("Found a potential match but editions did not match entry. Not loading")
 			}
 		}

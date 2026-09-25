@@ -1,8 +1,8 @@
 package ezbeq
 
 import (
-	"strings"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/iloveicedgreentea/go-plex/internal/config"
@@ -374,32 +374,32 @@ func TestUrlEncode(t *testing.T) {
 func TestHasAuthor(t *testing.T) {
 	assert := assert.New(t)
 	type testStruct struct {
-		author string
+		author   string
 		expected bool
 	}
 	tt := []testStruct{
 		{
-			author: "aron7awol",
+			author:   "aron7awol",
 			expected: true,
 		},
 		{
-			author: "None",
+			author:   "None",
 			expected: false,
 		},
 		{
-			author: " ",
+			author:   " ",
 			expected: false,
 		},
 		{
-			author: "",
+			author:   "",
 			expected: false,
 		},
 		{
-			author: "none",
+			author:   "none",
 			expected: false,
 		},
 		{
-			author: "aron7awol, mobe1969",
+			author:   "aron7awol, mobe1969",
 			expected: true,
 		},
 	}
@@ -410,10 +410,31 @@ func TestHasAuthor(t *testing.T) {
 	}
 }
 
-func TestBuildAuthorWhitelist(t *testing.T) {
-
-	s := buildAuthorWhitelist("aron7awol, mobe1969", "/api/1/search?audiotypes=dts-x&years=2011&tmdbid=12345")
-	assert.Equal(t, "/api/1/search?audiotypes=dts-x&years=2011&tmdbid=12345&authors=aron7awol&authors=mobe1969", s)
+func TestAuthorSearchOrder(t *testing.T) {
+	tests := []struct {
+		name      string
+		preferred string
+		want      []string
+		wantError bool
+	}{
+		{name: "ordered authors and wildcard", preferred: "author-a, author-b, *", want: []string{"author-a", "author-b", ""}},
+		{name: "trailing comma after wildcard", preferred: "author-a, *, ", want: []string{"author-a", ""}},
+		{name: "single author", preferred: "author-a", want: []string{"author-a"}},
+		{name: "blank searches any author", preferred: "", want: []string{""}},
+		{name: "none searches any author", preferred: "none", want: []string{""}},
+		{name: "wildcard must be last", preferred: "*, author-a", wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := authorSearchOrder(tt.preferred)
+			if tt.wantError {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestSearchCatalog(t *testing.T) {
@@ -513,8 +534,8 @@ func TestSearchCatalog(t *testing.T) {
 				PreferredAuthor: "mobe1969, aron7awol",
 				Edition:         "",
 			},
-			expectedEdition: "",
-			expectedDigest:  "c694bb4c1f67903aebc51998cd1aae417983368e784ed04bf92d873ee1ca213d",
+			expectedEdition:  "",
+			expectedDigest:   "c694bb4c1f67903aebc51998cd1aae417983368e784ed04bf92d873ee1ca213d",
 			expectedMvAdjust: -3.5,
 		},
 		{
@@ -526,8 +547,8 @@ func TestSearchCatalog(t *testing.T) {
 				PreferredAuthor: "aron7awol,mobe1969",
 				Edition:         "",
 			},
-			expectedEdition: "",
-			expectedDigest:  "c694bb4c1f67903aebc51998cd1aae417983368e784ed04bf92d873ee1ca213d",
+			expectedEdition:  "",
+			expectedDigest:   "c694bb4c1f67903aebc51998cd1aae417983368e784ed04bf92d873ee1ca213d",
 			expectedMvAdjust: -3.5,
 		},
 		{
