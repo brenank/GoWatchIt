@@ -141,6 +141,8 @@ TLDR: `make build`
 ### Web UI
 The web UI is the primary way to configure this application. It is available at `http://(your-server-ip):9999`
 
+Set `CONFIG_UI_ENABLED=false` in the process environment to disable the web UI and all config read/write endpoints after setup. It defaults to `true`; set it back to `true` or remove the variable to re-enable configuration. Health checks and media webhooks remain available while the UI is disabled.
+
 It will automatically restart the application when you save.
 
 Each section has an enable/disable toggle. If you disable a section, it will not be used. For example, if you disable BEQ, it will not load BEQ profiles. If you disable MQTT, it will not send MQTT messages.

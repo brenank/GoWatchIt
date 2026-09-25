@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/iloveicedgreentea/go-plex/api"
@@ -35,6 +36,21 @@ func main() {
 	if os.Getenv("LOG_LEVEL") != "debug" {
 		gin.SetMode(gin.ReleaseMode)
 	}
+	configUIEnabled := true
+	if value := os.Getenv("CONFIG_UI_ENABLED"); value != "" {
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			log.Warnf("Invalid CONFIG_UI_ENABLED value; disabling config UI")
+		} else {
+			configUIEnabled = enabled
+		}
+	}
+	if configUIEnabled {
+		log.Info("Configuration UI is enabled")
+	} else {
+		log.Info("Configuration UI and config endpoints are disabled")
+	}
+
 	r := gin.New()
 	// do not cache static files
 	r.Use(noCache())
@@ -85,10 +101,12 @@ func main() {
 	r.POST("/jellyfinwebhook", func(c *gin.Context) {
 		handlers.ProcessJfWebhook(jfChan, c)
 	})
-	r.Static("/assets", "./assets")
-	r.GET("/config-exists", api.ConfigExists)
-	r.GET("/get-config", api.GetConfig)
-	r.POST("/save-config", api.SaveConfig)
+	if configUIEnabled {
+		r.Static("/assets", "./assets")
+		r.GET("/config-exists", api.ConfigExists)
+		r.GET("/get-config", api.GetConfig)
+		r.POST("/save-config", api.SaveConfig)
+	}
 	// TODO: add generic webhook endpoint, maybe mqtt?
 
 	/*
@@ -101,13 +119,17 @@ func main() {
 	<-jfReady
 	log.Info("All workers are ready.")
 
-	r.Static("/web", "./web")
-	r.NoRoute(func(c *gin.Context) {
-		c.File("./web/index.html")
-	})
-
-	// Register routes
-	api.RegisterRoutes(r)
+	if configUIEnabled {
+		r.Static("/web", "./web")
+		r.NoRoute(func(c *gin.Context) {
+			c.File("./web/index.html")
+		})
+		api.RegisterRoutes(r)
+	} else {
+		r.NoRoute(func(c *gin.Context) {
+			c.Status(404)
+		})
+	}
 	r.SetTrustedProxies(nil)
 	port := config.GetString("main.listenPort")
 	if port == "" {
