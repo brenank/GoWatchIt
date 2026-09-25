@@ -5,9 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
+	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -65,11 +66,21 @@ func (c *JellyfinClient) GetAudioCodec(payload interface{}) (string, error) {
 
 // generic function to make a request
 func (c *JellyfinClient) makeRequest(endpoint string, method string) (io.ReadCloser, error) {
-	u := url.URL{
-		Scheme: "http",
-		Host:   fmt.Sprintf("%v:%v", c.ServerURL, c.Port),
-		Path:   endpoint,
+	// Accept a full server URL (for example, https://jellyfin.example.com) while
+	// keeping compatibility with existing configurations that contain only a host.
+	serverURL := strings.TrimRight(c.ServerURL, "/")
+	if !strings.Contains(serverURL, "://") {
+		serverURL = "http://" + serverURL
 	}
+	baseURL, err := url.Parse(serverURL)
+	if err != nil || baseURL.Host == "" {
+		return nil, fmt.Errorf("invalid Jellyfin URL %q", c.ServerURL)
+	}
+	if baseURL.Port() == "" && c.Port != "" {
+		baseURL.Host = net.JoinHostPort(baseURL.Hostname(), c.Port)
+	}
+	baseURL.Path = strings.TrimRight(baseURL.Path, "/") + "/" + strings.TrimLeft(endpoint, "/")
+	u := *baseURL
 	log.Debugf("Making request to %v", u.String())
 	// create request with auth
 	r := http.Request{
@@ -185,10 +196,8 @@ func (c *JellyfinClient) GetJfTMDB(payload models.JellyfinMetadata) (string, err
 			return re.FindString(s), nil
 		}
 	}
-
 	return "", errors.New("no tmdb id found")
 }
-
 
 // containsDDP looks for typical DD+ audio codec names
 func containsDDP(s string) bool {
@@ -294,7 +303,6 @@ func MapJFToBeqAudioCodec(codec, displayTitle, profile, layout string) string {
 			return "DTS-HD HR 5.1"
 		}
 
-	
 	// TrueHD 5.1
 	case common.InsensitiveContains(codec, "truehd") && common.InsensitiveContains(layout, "5.1"):
 		return "TrueHD 5.1"
